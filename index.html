@@ -174,16 +174,18 @@
 
     <!-- Firebase & App Scripts -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-
-        // Firebase 연동 (안전한 초기화)
+        // Firebase initialization with safety checks
         let auth = null;
         try {
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                // Dynamic import to avoid module specifier issues in some browsers
+                const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                const { getAuth, signInAnonymously, signInWithCustomToken } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+
                 const firebaseConfig = JSON.parse(__firebase_config);
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
+                
                 const initAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                         await signInWithCustomToken(auth, __initial_auth_token);
@@ -194,10 +196,10 @@
                 initAuth();
             }
         } catch (e) {
-            console.warn("Firebase initialization skipped.");
+            console.warn("Firebase initialization skipped in standalone mode.");
         }
 
-        // 지수 백오프 방식의 재시도 로직
+        // Exponential backoff fetch
         const fetchWithRetry = async (url, options, retries = 5) => {
             const delays = [1000, 2000, 4000, 8000, 16000];
             for (let i = 0; i < retries; i++) {
@@ -216,13 +218,13 @@
         };
 
         window.generateFortune = async () => {
-            const userKey = document.getElementById('userApiKey').value.trim();
+            const userKeyInput = document.getElementById('userApiKey').value.trim();
             const birthDate = document.getElementById('birthDate').value.trim();
             const birthTime = document.getElementById('birthTime').value.trim();
             const concern = document.getElementById('concern').value;
             const errorBox = document.getElementById('error-box');
 
-            if (!userKey) {
+            if (!userKeyInput) {
                 errorBox.innerText = "API 키를 입력해주어야 천기를 읽을 수 있네.";
                 errorBox.classList.remove('hidden');
                 return;
@@ -239,16 +241,18 @@
             document.getElementById('loading-section').classList.remove('hidden');
             document.getElementById('loading-text').innerText = "천기(운세)를 살피는 중이네...";
 
+            const systemPrompt = `당신은 '천기누설 운세가'입니다. 사용자의 생년월일(${birthDate}), 고민(${concern})을 바탕으로 운세를 풀이하세요. 반드시 JSON으로만 응답하세요. 구조: {"summary": "총평", "wealth": "재물운", "love": "애정운", "warning": "주의사항", "luckyItem": "아이템", "luckyColor": "컬러"}`;
+
             try {
-                // 1. 운세 텍스트 생성 (Gemini 2.5 Flash)
+                // 1. Text Generation (Gemini 2.5 Flash)
                 const textRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKeyInput}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            contents: [{ parts: [{ text: `내 생년월일은 ${birthDate}이고 고민은 ${concern}이야. 내 운세를 점쳐주게.` }] }],
-                            systemInstruction: { parts: [{ text: `당신은 '천기누설 운세가'입니다. 반드시 JSON으로만 응답하세요. 구조: {"summary": "총평", "wealth": "재물운", "love": "애정운", "warning": "주의사항", "luckyItem": "아이템", "luckyColor": "컬러"}` }] },
+                            contents: [{ parts: [{ text: `내 운세를 점쳐주게.` }] }],
+                            systemInstruction: { parts: [{ text: systemPrompt }] },
                             generationConfig: { responseMimeType: "application/json" }
                         })
                     }
@@ -258,46 +262,28 @@
                 
                 document.getElementById('loading-text').innerText = "영험한 부적을 그리는 중이네...";
 
-                // 2. 부적 이미지 생성 (최신 방식 적용 및 Fallback 모델 활용)
-                let base64Data = null;
-                
-                try {
-                    // 시도 1: Imagen 4.0 (가장 정교함)
-                    const imgRes = await fetchWithRetry(
-                        `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKey}`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                instances: { prompt: `Oriental mystic talisman for ${concern}, Korean Bujeok style, sacred red calligraphy on yellow aged paper, golden aura.` },
-                                parameters: { sampleCount: 1 }
-                            })
-                        }
-                    );
-                    base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
-                } catch (imgErr) {
-                    console.warn("Imagen 4.0 failed, trying fallback model...", imgErr);
-                    
-                    // 시도 2: Fallback (Gemini 2.5 Flash Image) - API 키가 호환되지 않을 때를 대비
-                    const fallbackRes = await fetchWithRetry(
-                        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${userKey}`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{ parts: [{ text: `Exquisite oriental talisman for ${concern}, Korean traditional bujeok style, red ink symbols on yellow paper.` }] }],
-                                generationConfig: { responseModalities: ["IMAGE"] }
-                            })
-                        }
-                    );
-                    base64Data = fallbackRes.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-                }
+                // 2. Image Generation (Imagen 4.0 strictly following instructions)
+                // Use the standard predict endpoint for imagen-4.0-generate-001
+                const imgRes = await fetchWithRetry(
+                    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKeyInput}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            instances: { 
+                                prompt: `Exquisite oriental talisman for ${concern}, Korean traditional bujeok style, mystical red spiritual calligraphy on aged yellow paper, golden glowing aura, divine protection pattern.` 
+                            },
+                            parameters: { sampleCount: 1 }
+                        })
+                    }
+                );
 
-                if (!base64Data) throw new Error("부적을 그리는 기운을 불러오지 못했네.");
+                const base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
+                if (!base64Data) throw new Error("부적을 그리는 기운(이미지 데이터)을 불러오지 못했네.");
 
                 const imageUrl = `data:image/png;base64,${base64Data}`;
 
-                // 화면 업데이트
+                // UI Update
                 document.getElementById('res-summary').innerText = data.summary || "천기를 읽었으나 내용이 흐릿하구먼.";
                 document.getElementById('res-wealth').innerText = data.wealth || "재물운이 구름에 가렸네.";
                 document.getElementById('res-love').innerText = data.love || "애정운의 인연이 아직 멀리 있네.";
@@ -317,7 +303,9 @@
                 
                 let errorMsg = `천기의 흐름이 어지럽구먼: ${err.message}`;
                 if (err.message.includes("API key not valid") || err.message.includes("403")) {
-                    errorMsg = "입력하신 API 키가 유효하지 않거나, 이미지 생성 권한이 아직 활성화되지 않은 것 같네. 키를 다시 한번 확인해주게나.";
+                    errorMsg = "입력하신 API 키가 유효하지 않거나, 이미지 생성(Imagen 4.0) 권한이 해당 키에 활성화되지 않은 것 같네. Google AI Studio에서 'Imagen' 권한을 확인해주게나.";
+                } else if (err.message.includes("not found")) {
+                    errorMsg = "사용 중인 모델 정보를 서버에서 찾을 수 없네. 일시적인 현상일 수 있으니 잠시 후 다시 시도해보게나.";
                 }
                 errorBox.innerText = errorMsg;
                 errorBox.classList.remove('hidden');
