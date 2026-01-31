@@ -88,7 +88,7 @@
                 </div>
             </div>
             <div class="text-center space-y-2">
-                <h2 class="text-2xl font-bold text-amber-200">운명의 실타래를 푸는 중이네...</h2>
+                <h2 id="loading-text" class="text-2xl font-bold text-amber-200">운명의 실타래를 푸는 중이네...</h2>
                 <p class="text-slate-400">자네를 위한 부적에 기운을 불어넣고 있으니 조금만 기다리게나.</p>
             </div>
         </div>
@@ -165,7 +165,7 @@
             </div>
         </div>
 
-        <div id="error-box" class="hidden mt-8 p-4 bg-red-900/20 border border-red-500/30 rounded-xl text-red-200 text-center text-sm"></div>
+        <div id="error-box" class="hidden mt-8 p-4 bg-red-900/20 border border-red-500/30 rounded-xl text-red-200 text-center text-sm leading-relaxed"></div>
     </main>
 
     <footer class="py-12 text-center text-slate-600 text-xs">
@@ -177,14 +177,13 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // Firebase 연동 (배포 환경 고려하여 예외 처리)
+        // Firebase 연동 (안전한 초기화)
         let auth = null;
         try {
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
                 const firebaseConfig = JSON.parse(__firebase_config);
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
-
                 const initAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                         await signInWithCustomToken(auth, __initial_auth_token);
@@ -195,7 +194,7 @@
                 initAuth();
             }
         } catch (e) {
-            console.warn("Firebase skip");
+            console.warn("Firebase initialization skipped.");
         }
 
         // 지수 백오프 방식의 재시도 로직
@@ -217,13 +216,13 @@
         };
 
         window.generateFortune = async () => {
-            const userKeyInput = document.getElementById('userApiKey').value.trim();
+            const userKey = document.getElementById('userApiKey').value.trim();
             const birthDate = document.getElementById('birthDate').value.trim();
             const birthTime = document.getElementById('birthTime').value.trim();
             const concern = document.getElementById('concern').value;
             const errorBox = document.getElementById('error-box');
 
-            if (!userKeyInput) {
+            if (!userKey) {
                 errorBox.innerText = "API 키를 입력해주어야 천기를 읽을 수 있네.";
                 errorBox.classList.remove('hidden');
                 return;
@@ -238,64 +237,71 @@
             errorBox.classList.add('hidden');
             document.getElementById('input-section').classList.add('hidden');
             document.getElementById('loading-section').classList.remove('hidden');
-
-            const systemPrompt = `당신은 신비로운 기운을 가진 '천기누설 운세가'입니다. 
-            사용자의 생년월일(${birthDate}), 태어난 시(${birthTime}), 고민사항(${concern})을 바탕으로 동양의 사주명리학과 타로의 직관을 결합해 운세를 풀이하세요.
-            말투는 신비로우면서도 따뜻한 위로를 건네는 말투(~하시게나, ~보이네 등)를 사용하세요.
-            반드시 JSON 형식으로 응답하세요. 다른 텍스트 없이 오직 JSON만 응답하세요. 구조:
-            {
-              "summary": "총평",
-              "wealth": "재물운",
-              "love": "애정운",
-              "warning": "주의사항",
-              "luckyItem": "행운의 아이템",
-              "luckyColor": "행운의 컬러"
-            }`;
+            document.getElementById('loading-text').innerText = "천기(운세)를 살피는 중이네...";
 
             try {
-                // 1. 운세 텍스트 생성
+                // 1. 운세 텍스트 생성 (Gemini 2.5 Flash)
                 const textRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKeyInput}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKey}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             contents: [{ parts: [{ text: `내 생년월일은 ${birthDate}이고 고민은 ${concern}이야. 내 운세를 점쳐주게.` }] }],
-                            systemInstruction: { parts: [{ text: systemPrompt }] },
+                            systemInstruction: { parts: [{ text: `당신은 '천기누설 운세가'입니다. 반드시 JSON으로만 응답하세요. 구조: {"summary": "총평", "wealth": "재물운", "love": "애정운", "warning": "주의사항", "luckyItem": "아이템", "luckyColor": "컬러"}` }] },
                             generationConfig: { responseMimeType: "application/json" }
                         })
                     }
                 );
 
-                let rawJson = textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-                rawJson = rawJson.replace(/```json/g, "").replace(/```/g, "").trim();
-                const data = JSON.parse(rawJson);
+                const data = JSON.parse(textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+                
+                document.getElementById('loading-text').innerText = "영험한 부적을 그리는 중이네...";
 
-                // 2. 부적 이미지 생성 (호출 구조 정밀 수정)
-                const imgRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKeyInput}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            instances: { 
-                                prompt: `Exquisite High-Resolution Oriental Mystic Talisman for ${concern}, Korean Bujeok style, complex red spiritual calligraphy symbols on aged textured yellow hanji paper, mystical golden glowing aura, spiritual protection pattern, 8k resolution, divine traditional ink wash artwork.` 
-                            },
-                            parameters: { sampleCount: 1 }
-                        })
-                    }
-                );
+                // 2. 부적 이미지 생성 (최신 방식 적용 및 Fallback 모델 활용)
+                let base64Data = null;
+                
+                try {
+                    // 시도 1: Imagen 4.0 (가장 정교함)
+                    const imgRes = await fetchWithRetry(
+                        `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKey}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                instances: { prompt: `Oriental mystic talisman for ${concern}, Korean Bujeok style, sacred red calligraphy on yellow aged paper, golden aura.` },
+                                parameters: { sampleCount: 1 }
+                            })
+                        }
+                    );
+                    base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
+                } catch (imgErr) {
+                    console.warn("Imagen 4.0 failed, trying fallback model...", imgErr);
+                    
+                    // 시도 2: Fallback (Gemini 2.5 Flash Image) - API 키가 호환되지 않을 때를 대비
+                    const fallbackRes = await fetchWithRetry(
+                        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${userKey}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: `Exquisite oriental talisman for ${concern}, Korean traditional bujeok style, red ink symbols on yellow paper.` }] }],
+                                generationConfig: { responseModalities: ["IMAGE"] }
+                            })
+                        }
+                    );
+                    base64Data = fallbackRes.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+                }
 
-                const base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
-                if (!base64Data) throw new Error("부적을 그리는 기운(이미지 데이터)이 부족하네.");
+                if (!base64Data) throw new Error("부적을 그리는 기운을 불러오지 못했네.");
 
                 const imageUrl = `data:image/png;base64,${base64Data}`;
 
                 // 화면 업데이트
-                document.getElementById('res-summary').innerText = data.summary || "총평을 읽지 못했네.";
-                document.getElementById('res-wealth').innerText = data.wealth || "재물운이 안개에 가렸네.";
-                document.getElementById('res-love').innerText = data.love || "애정운의 실타래가 엉켰네.";
-                document.getElementById('res-warning').innerText = data.warning || "주의를 늦추지 말게나.";
+                document.getElementById('res-summary').innerText = data.summary || "천기를 읽었으나 내용이 흐릿하구먼.";
+                document.getElementById('res-wealth').innerText = data.wealth || "재물운이 구름에 가렸네.";
+                document.getElementById('res-love').innerText = data.love || "애정운의 인연이 아직 멀리 있네.";
+                document.getElementById('res-warning').innerText = data.warning || "언행을 조심하고 자중하시게나.";
                 document.getElementById('res-item').innerText = data.luckyItem || "없음";
                 document.getElementById('res-color').innerText = data.luckyColor || "없음";
                 document.getElementById('talisman-img').src = imageUrl;
@@ -305,18 +311,15 @@
                 document.getElementById('result-section').classList.remove('hidden');
 
             } catch (err) {
-                console.error("Error details:", err);
+                console.error("Critical error:", err);
                 document.getElementById('loading-section').classList.add('hidden');
                 document.getElementById('input-section').classList.remove('hidden');
                 
-                // 구체적인 오류 원인 분석
-                let msg = "천기의 흐름이 어지럽구먼.";
-                if (err.message.includes("API key not valid")) {
-                    msg = "입력하신 API 키가 유효하지 않거나, 해당 모델 사용 권한이 없네. 키를 다시 확인해주게나.";
-                } else {
-                    msg = `오류 발생: ${err.message}`;
+                let errorMsg = `천기의 흐름이 어지럽구먼: ${err.message}`;
+                if (err.message.includes("API key not valid") || err.message.includes("403")) {
+                    errorMsg = "입력하신 API 키가 유효하지 않거나, 이미지 생성 권한이 아직 활성화되지 않은 것 같네. 키를 다시 한번 확인해주게나.";
                 }
-                errorBox.innerText = msg;
+                errorBox.innerText = errorMsg;
                 errorBox.classList.remove('hidden');
             }
         };
