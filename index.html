@@ -177,7 +177,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // Global check to prevent crash on missing environment variables
+        // Firebase 연동 (배포 환경 고려)
         let auth = null;
         try {
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
@@ -195,16 +195,19 @@
                 initAuth();
             }
         } catch (e) {
-            console.warn("Firebase initialization skipped or failed in standalone mode.");
+            console.warn("Firebase skip");
         }
 
-        // Exponential backoff fetch
+        // 지수 백오프 방식의 재시도 로직
         const fetchWithRetry = async (url, options, retries = 5) => {
             const delays = [1000, 2000, 4000, 8000, 16000];
             for (let i = 0; i < retries; i++) {
                 try {
                     const response = await fetch(url, options);
-                    if (!response.ok) throw new Error('Network response not ok');
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+                    }
                     return await response.json();
                 } catch (err) {
                     if (i === retries - 1) throw err;
@@ -239,7 +242,7 @@
             const systemPrompt = `당신은 신비로운 기운을 가진 '천기누설 운세가'입니다. 
             사용자의 생년월일(${birthDate}), 태어난 시(${birthTime}), 고민사항(${concern})을 바탕으로 동양의 사주명리학과 타로의 직관을 결합해 운세를 풀이하세요.
             말투는 신비로우면서도 따뜻한 위로를 건네는 말투(~하시게나, ~보이네 등)를 사용하세요.
-            반드시 JSON 형식으로 응답하세요. 구조:
+            반드시 JSON 형식으로 응답하세요. 다른 텍스트 없이 오직 JSON만 응답하세요. 구조:
             {
               "summary": "총평",
               "wealth": "재물운",
@@ -250,7 +253,7 @@
             }`;
 
             try {
-                // 1. Text Generation
+                // 1. 운세 텍스트 생성
                 const textRes = await fetchWithRetry(
                     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKey}`,
                     {
@@ -264,29 +267,32 @@
                     }
                 );
 
-                const data = JSON.parse(textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+                // JSON 파싱 전 정제 (마크다운 블록 제거)
+                let rawJson = textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+                rawJson = rawJson.replace(/```json/g, "").replace(/```/g, "").trim();
+                const data = JSON.parse(rawJson);
 
-                // 2. Image Generation
+                // 2. 부적 이미지 생성
                 const imgRes = await fetchWithRetry(
                     `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKey}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            instances: { 
-                                prompt: `Detailed Mystic Oriental Talisman for ${concern}, Korean Bujeok style, sacred red spiritual calligraphy and abstract symbols on ancient yellow textured handmade paper, ethereal golden glowing aura, spiritual protection pattern, 8k resolution, divine traditional ink wash artwork.` 
-                            },
+                            instances: [{ 
+                                prompt: `Exquisite High-Resolution Oriental Mystic Talisman for ${concern}, Korean Bujeok style, complex red spiritual calligraphy symbols on aged textured yellow hanji paper, mystical golden glowing aura, spiritual protection pattern, 8k resolution, divine traditional ink wash artwork.` 
+                            }],
                             parameters: { sampleCount: 1 }
                         })
                     }
                 );
 
                 const base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
-                const imageUrl = base64Data ? `data:image/png;base64,${base64Data}` : null;
+                if (!base64Data || !data.summary) throw new Error("데이터를 불러오는 데 실패했네.");
 
-                if (!imageUrl || !data.summary) throw new Error("Incomplete result");
+                const imageUrl = `data:image/png;base64,${base64Data}`;
 
-                // UI Update
+                // 화면 업데이트
                 document.getElementById('res-summary').innerText = data.summary;
                 document.getElementById('res-wealth').innerText = data.wealth;
                 document.getElementById('res-love').innerText = data.love;
@@ -300,10 +306,10 @@
                 document.getElementById('result-section').classList.remove('hidden');
 
             } catch (err) {
-                console.error("Error during generation:", err);
+                console.error("Error details:", err);
                 document.getElementById('loading-section').classList.add('hidden');
                 document.getElementById('input-section').classList.remove('hidden');
-                errorBox.innerText = "API 키가 올바르지 않거나 천기의 흐름이 잠시 어지러워졌구먼. 키를 다시 확인해주게나.";
+                errorBox.innerText = `천기의 흐름이 어지럽구먼: ${err.message}. 키가 정확한지, 혹은 잠시 후 다시 시도해보게나.`;
                 errorBox.classList.remove('hidden');
             }
         };
