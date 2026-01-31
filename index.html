@@ -44,7 +44,7 @@
             </p>
             
             <div class="space-y-6">
-                <!-- API Key Input Added -->
+                <!-- API Key Input -->
                 <div>
                     <label class="block text-sm text-amber-500/70 mb-2">Google Gemini API 키</label>
                     <input type="password" id="userApiKey" placeholder="API 키를 입력해주게" class="w-full bg-slate-800/50 border border-amber-900/50 rounded-lg p-3 outline-none focus:border-amber-500 transition-colors text-amber-200">
@@ -175,25 +175,28 @@
     <!-- Firebase & App Scripts -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
+        // Global check to prevent crash on missing environment variables
+        let auth = null;
+        try {
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
 
-        // Authentication Init
-        async function initAuth() {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (err) {
-                // Silent failure handled by flow
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
+                initAuth();
             }
+        } catch (e) {
+            console.warn("Firebase initialization skipped or failed in standalone mode.");
         }
-        initAuth();
 
         // Exponential backoff fetch
         const fetchWithRetry = async (url, options, retries = 5) => {
@@ -247,7 +250,7 @@
             }`;
 
             try {
-                // 1. Text Generation - Use provided userKey
+                // 1. Text Generation
                 const textRes = await fetchWithRetry(
                     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKey}`,
                     {
@@ -263,7 +266,7 @@
 
                 const data = JSON.parse(textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
 
-                // 2. Image Generation - Use provided userKey
+                // 2. Image Generation
                 const imgRes = await fetchWithRetry(
                     `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKey}`,
                     {
@@ -278,7 +281,8 @@
                     }
                 );
 
-                const imageUrl = `data:image/png;base64,${imgRes.predictions?.[0]?.bytesBase64Encoded}`;
+                const base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
+                const imageUrl = base64Data ? `data:image/png;base64,${base64Data}` : null;
 
                 if (!imageUrl || !data.summary) throw new Error("Incomplete result");
 
@@ -296,6 +300,7 @@
                 document.getElementById('result-section').classList.remove('hidden');
 
             } catch (err) {
+                console.error("Error during generation:", err);
                 document.getElementById('loading-section').classList.add('hidden');
                 document.getElementById('input-section').classList.remove('hidden');
                 errorBox.innerText = "API 키가 올바르지 않거나 천기의 흐름이 잠시 어지러워졌구먼. 키를 다시 확인해주게나.";
