@@ -177,7 +177,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // Firebase 연동 (배포 환경 고려)
+        // Firebase 연동 (배포 환경 고려하여 예외 처리)
         let auth = null;
         try {
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
@@ -217,13 +217,13 @@
         };
 
         window.generateFortune = async () => {
-            const userKey = document.getElementById('userApiKey').value.trim();
+            const userKeyInput = document.getElementById('userApiKey').value.trim();
             const birthDate = document.getElementById('birthDate').value.trim();
             const birthTime = document.getElementById('birthTime').value.trim();
             const concern = document.getElementById('concern').value;
             const errorBox = document.getElementById('error-box');
 
-            if (!userKey) {
+            if (!userKeyInput) {
                 errorBox.innerText = "API 키를 입력해주어야 천기를 읽을 수 있네.";
                 errorBox.classList.remove('hidden');
                 return;
@@ -255,7 +255,7 @@
             try {
                 // 1. 운세 텍스트 생성
                 const textRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKeyInput}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -267,38 +267,37 @@
                     }
                 );
 
-                // JSON 파싱 전 정제 (마크다운 블록 제거)
                 let rawJson = textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
                 rawJson = rawJson.replace(/```json/g, "").replace(/```/g, "").trim();
                 const data = JSON.parse(rawJson);
 
-                // 2. 부적 이미지 생성
+                // 2. 부적 이미지 생성 (호출 구조 정밀 수정)
                 const imgRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKeyInput}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            instances: [{ 
+                            instances: { 
                                 prompt: `Exquisite High-Resolution Oriental Mystic Talisman for ${concern}, Korean Bujeok style, complex red spiritual calligraphy symbols on aged textured yellow hanji paper, mystical golden glowing aura, spiritual protection pattern, 8k resolution, divine traditional ink wash artwork.` 
-                            }],
+                            },
                             parameters: { sampleCount: 1 }
                         })
                     }
                 );
 
                 const base64Data = imgRes.predictions?.[0]?.bytesBase64Encoded;
-                if (!base64Data || !data.summary) throw new Error("데이터를 불러오는 데 실패했네.");
+                if (!base64Data) throw new Error("부적을 그리는 기운(이미지 데이터)이 부족하네.");
 
                 const imageUrl = `data:image/png;base64,${base64Data}`;
 
                 // 화면 업데이트
-                document.getElementById('res-summary').innerText = data.summary;
-                document.getElementById('res-wealth').innerText = data.wealth;
-                document.getElementById('res-love').innerText = data.love;
-                document.getElementById('res-warning').innerText = data.warning;
-                document.getElementById('res-item').innerText = data.luckyItem;
-                document.getElementById('res-color').innerText = data.luckyColor;
+                document.getElementById('res-summary').innerText = data.summary || "총평을 읽지 못했네.";
+                document.getElementById('res-wealth').innerText = data.wealth || "재물운이 안개에 가렸네.";
+                document.getElementById('res-love').innerText = data.love || "애정운의 실타래가 엉켰네.";
+                document.getElementById('res-warning').innerText = data.warning || "주의를 늦추지 말게나.";
+                document.getElementById('res-item').innerText = data.luckyItem || "없음";
+                document.getElementById('res-color').innerText = data.luckyColor || "없음";
                 document.getElementById('talisman-img').src = imageUrl;
                 document.getElementById('talisman-title').innerText = `영험한 ${concern} 부적`;
 
@@ -309,7 +308,15 @@
                 console.error("Error details:", err);
                 document.getElementById('loading-section').classList.add('hidden');
                 document.getElementById('input-section').classList.remove('hidden');
-                errorBox.innerText = `천기의 흐름이 어지럽구먼: ${err.message}. 키가 정확한지, 혹은 잠시 후 다시 시도해보게나.`;
+                
+                // 구체적인 오류 원인 분석
+                let msg = "천기의 흐름이 어지럽구먼.";
+                if (err.message.includes("API key not valid")) {
+                    msg = "입력하신 API 키가 유효하지 않거나, 해당 모델 사용 권한이 없네. 키를 다시 확인해주게나.";
+                } else {
+                    msg = `오류 발생: ${err.message}`;
+                }
+                errorBox.innerText = msg;
                 errorBox.classList.remove('hidden');
             }
         };
