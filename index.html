@@ -44,6 +44,13 @@
             </p>
             
             <div class="space-y-6">
+                <!-- API Key Input Added -->
+                <div>
+                    <label class="block text-sm text-amber-500/70 mb-2">Google Gemini API 키</label>
+                    <input type="password" id="userApiKey" placeholder="API 키를 입력해주게" class="w-full bg-slate-800/50 border border-amber-900/50 rounded-lg p-3 outline-none focus:border-amber-500 transition-colors text-amber-200">
+                    <p class="text-[10px] text-slate-500 mt-1 italic">*입력한 키는 본인의 운세를 점치는 데에만 사용되네.</p>
+                </div>
+
                 <div>
                     <label class="block text-sm text-amber-500/70 mb-2">생년월일 (8자리)</label>
                     <input type="text" id="birthDate" placeholder="예: 19900101" class="w-full bg-slate-800/50 border border-amber-900/50 rounded-lg p-3 outline-none focus:border-amber-500 transition-colors">
@@ -173,7 +180,6 @@
         const firebaseConfig = JSON.parse(__firebase_config);
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        const apiKey = "";
 
         // Authentication Init
         async function initAuth() {
@@ -205,10 +211,17 @@
         };
 
         window.generateFortune = async () => {
+            const userKey = document.getElementById('userApiKey').value.trim();
             const birthDate = document.getElementById('birthDate').value.trim();
             const birthTime = document.getElementById('birthTime').value.trim();
             const concern = document.getElementById('concern').value;
             const errorBox = document.getElementById('error-box');
+
+            if (!userKey) {
+                errorBox.innerText = "API 키를 입력해주어야 천기를 읽을 수 있네.";
+                errorBox.classList.remove('hidden');
+                return;
+            }
 
             if (!birthDate || birthDate.length < 8) {
                 errorBox.innerText = "생년월일 8자리를 정확히 입력해주게나.";
@@ -234,9 +247,9 @@
             }`;
 
             try {
-                // 1. Text Generation - gemini-2.5-flash-preview-09-2025
+                // 1. Text Generation - Use provided userKey
                 const textRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userKey}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -250,9 +263,9 @@
 
                 const data = JSON.parse(textRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
 
-                // 2. Image Generation - imagen-4.0-generate-001
+                // 2. Image Generation - Use provided userKey
                 const imgRes = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userKey}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -285,7 +298,7 @@
             } catch (err) {
                 document.getElementById('loading-section').classList.add('hidden');
                 document.getElementById('input-section').classList.remove('hidden');
-                errorBox.innerText = "천기의 흐름이 잠시 어지러워졌구먼. 잠시 후 다시 시도해주게나.";
+                errorBox.innerText = "API 키가 올바르지 않거나 천기의 흐름이 잠시 어지러워졌구먼. 키를 다시 확인해주게나.";
                 errorBox.classList.remove('hidden');
             }
         };
